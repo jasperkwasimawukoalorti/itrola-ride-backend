@@ -126,22 +126,4 @@ class Trip(Base):
     requested_at = Column(DateTime(timezone=True), server_default=func.now())
     matched_at = Column(DateTime(timezone=True), nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
-    completed_at = Column(DateTime(timezone=True), nullable=True)
-
-    fare_estimate = Column(Float, nullable=True)
-    fare_final = Column(Float, nullable=True)
-    payment_method = Column(Enum(PaymentMethod), default=PaymentMethod.cash)
-    payment_status = Column(Enum(PaymentStatus), default=PaymentStatus.pending)
-
-    rider = relationship("User", back_populates="trips")
-    driver = relationship("Driver", back_populates="trips")
-
-
-class Rating(Base):
-    __tablename__ = "ratings"
-
-    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
-    trip_id = Column(UUID(as_uuid=False), ForeignKey("trips.id"), nullable=False)
-    rated_by = Column(Enum(RatedBy), nullable=False)
-    score = Column(Integer, nullable=False)
-    comment = Column(Text, nullable=True)
+    completed_at = Column(DateTime(timezone=True), nu

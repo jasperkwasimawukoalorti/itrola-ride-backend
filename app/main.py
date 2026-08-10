@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from app.core.database import Base, engine
-from app.routers import auth, drivers, trips
+from app.routers import auth, drivers, trips, payments
 
 app = FastAPI(title="itrola Ride API")
 
@@ -10,6 +10,7 @@ Base.metadata.create_all(bind=engine)
 app.include_router(auth.router)
 app.include_router(drivers.router)
 app.include_router(trips.router)
+app.include_router(payments.router)
 
 
 @app.get("/")

@@ -76,3 +76,9 @@ class RatingCreate(BaseModel):
     rated_by: str  # "rider" or "driver"
     score: int
     comment: Optional[str] = None
+
+
+# --- Payments ---
+class MoMoChargeRequest(BaseModel):
+    momo_number: str
+    network: str  # "mtn", "vodafone", or "airteltigo"

@@ -72,7 +72,7 @@ All of the above was smoke-tested: unauthorized requests correctly return 403, c
 - Add `PAYSTACK_SECRET_KEY=sk_test_...` (or `sk_live_...`) to your env vars. Get this from your Paystack dashboard.
 - In Paystack's dashboard, set your webhook URL to `https://<your-deployed-domain>/webhooks/paystack`.
 
-**Testing status**: the webhook signature verification and trip-status update logic were tested end-to-end with simulated Paystack payloads — wrong signatures are correctly rejected (401), correct signatures correctly update the trip to `paid`. The actual outbound call to Paystack's `/charge` endpoint has **not** been tested live — the dev sandbox this was built in has no network access to `api.paystack.co`. Test that part with your real Paystack test-mode keys before going live. The code does handle a non-JSON/unreachable response gracefully (returns a 502 instead of crashing) — this was verified, since the sandbox's network restriction reproduced exactly that scenario.
+**Testing status**: the full payment flow has now been tested end-to-end with real Paystack test-mode keys. A live trip was created (request → matched → start → complete), then `/trips/{trip_id}/pay` was called with a test MoMo number — Paystack returned `paystack_status: "success"` with a real transaction reference (`mdbz5g7thpwyobl`), confirming the outbound `/charge` call, auth headers, and response parsing all work correctly against the live API. `payment_status` correctly stays `pending` until the webhook fires (expected, since sandbox test mode has no real phone to approve the MoMo prompt on). Webhook signature verification and trip-status update logic were separately tested with simulated Paystack payloads — wrong signatures are correctly rejected (401), correct signatures correctly update the trip to `paid`.
 
 ## What's stubbed / needs real implementation before production
 
@@ -81,11 +81,11 @@ All of the above was smoke-tested: unauthorized requests correctly return 403, c
 - **Live location push to rider**: currently the rider app would need to poll `GET /trips/{id}` — swap for WebSocket or Firebase Realtime DB for smooth live tracking on the map.
 - **Fare calc**: flat straight-line-distance formula — replace with Google Distance Matrix API for real road distance/ETA.
 - **Admin system**: currently a single shared static key — fine for one person (you) managing verifications, but build a real admin user/role system before you have a team.
-- **Paystack `/charge` call**: implemented but not live-tested (see Payments section above) — verify with real test-mode keys.
+- **Paystack `/charge` call**: implemented and live-tested successfully with real test-mode keys (see Payments section above). Still needs: live webhook delivery testing (requires a public URL Paystack can actually reach, e.g. after Cloud Run deploy) to confirm the full pending → paid transition happens automatically outside of simulated payloads.
 
 ## Suggested next steps
 
 1. Get this running locally, test the full flow in `/docs`: onboard driver → verify (with admin key) → set location → set available → rider requests trip → matched → start → complete → pay.
-2. Test the Paystack `/charge` call live with your real test-mode keys (this could not be verified in the dev sandbox — see Payments section).
+2. ~~Test the Paystack `/charge` call live~~ — done, verified working. Next: test live webhook delivery once deployed to a public URL.
 3. Build the driver and rider app screens against these endpoints (React Native).
 4. Deploy to Cloud Run (you've done this before with ChurnSpy — same pattern, root route is already included here to avoid the startup-probe 404 loop issue). Suggested Cloud Run service name: `itrola-ride-api`.

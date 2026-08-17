@@ -66,6 +66,9 @@ class TripOut(BaseModel):
     status: str
     driver_id: Optional[str]
     fare_estimate: Optional[float]
+    payment_status: Optional[str] = None
+    payment_reference: Optional[str] = None
+    payment_method: Optional[str] = None
 
     class Config:
         from_attributes = True

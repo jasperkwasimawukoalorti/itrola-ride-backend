@@ -15,12 +15,17 @@ Auth model:
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import text
-from geoalchemy2.shape import from_shape
-from shapely.geometry import Point
+import sqlalchemy
+from geoalchemy2 import Geography  # type: ignore[import-not-found]
+from geoalchemy2.elements import WKTElement  # type: ignore[import-not-found]
 
 from app.core.database import get_db
-from app.core.deps import require_rider, require_driver, get_current_user, CurrentUser
+from app.core.deps import (
+    require_rider,
+    require_driver,
+    get_current_user as auth_get_current_user,
+    CurrentUser,
+)
 from app.models.models import Trip, Driver, DriverLocation, TripStatus, DriverStatus
 from app.schemas.schemas import TripRequest, TripOut
 
@@ -28,6 +33,13 @@ router = APIRouter(prefix="/trips", tags=["trips"])
 
 BASE_FARE = 10.0       # GHS, adjust to your market
 PER_KM_RATE = 2.5      # GHS per km, placeholder — validate against local rates
+
+
+def get_current_user(
+    current_user: CurrentUser = Depends(auth_get_current_user),
+) -> CurrentUser:
+    """Resolve and return the authenticated user for trip-party endpoints."""
+    return current_user
 
 
 def estimate_fare(distance_km: float) -> float:
@@ -40,14 +52,24 @@ def request_trip(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(require_rider),
 ):
-    pickup = from_shape(Point(payload.pickup_lng, payload.pickup_lat), srid=4326)
-    dropoff = from_shape(Point(payload.dropoff_lng, payload.dropoff_lat), srid=4326)
+    pickup = WKTElement(
+        f"POINT({payload.pickup_lng} {payload.pickup_lat})",
+        srid=4326,
+    )
+    dropoff = WKTElement(
+        f"POINT({payload.dropoff_lng} {payload.dropoff_lat})",
+        srid=4326,
+    )
 
     # Rough straight-line distance for fare estimate.
     # Swap for Google Distance Matrix API for accurate road distance.
     result = db.execute(
-        text("SELECT ST_Distance(:p1, :p2) / 1000.0"),
-        {"p1": str(pickup), "p2": str(dropoff)}
+        sqlalchemy.select(
+            sqlalchemy.func.ST_Distance(
+                sqlalchemy.cast(pickup, Geography),
+                sqlalchemy.cast(dropoff, Geography),
+            ) / 1000.0
+        )
     ).scalar()
     distance_km = result or 1.0
 
@@ -70,18 +92,19 @@ def request_trip(
 
 def _try_match_driver(trip: Trip, db: Session):
     """Find nearest verified, available driver within 5km and assign them."""
+    location = sqlalchemy.cast(DriverLocation.location, Geography)
+    pickup = sqlalchemy.cast(trip.pickup_location, Geography)
+    distance = sqlalchemy.func.ST_Distance(location, pickup)
     nearest = db.execute(
-        text("""
-            SELECT d.id
-            FROM drivers d
-            JOIN driver_locations dl ON dl.driver_id = d.id
-            WHERE d.status = :verified
-              AND d.is_available = true
-              AND ST_DWithin(dl.location, :pickup, 5000)
-            ORDER BY ST_Distance(dl.location, :pickup) ASC
-            LIMIT 1
-        """),
-        {"verified": DriverStatus.verified.value, "pickup": str(trip.pickup_location)}
+        sqlalchemy.select(Driver.id)
+        .join(DriverLocation, DriverLocation.driver_id == Driver.id)
+        .where(
+            Driver.status == DriverStatus.verified,
+            Driver.is_available.is_(True),
+            sqlalchemy.func.ST_DWithin(location, pickup, 5000),
+        )
+        .order_by(distance)
+        .limit(1)
     ).first()
 
     if nearest:
@@ -105,12 +128,37 @@ def start_trip(
     trip = _get_trip_or_404(trip_id, db)
     if trip.driver_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not the assigned driver for this trip")
-    if trip.status != TripStatus.matched:
-        raise HTTPException(status_code=400, detail=f"Cannot start trip from status {trip.status.value}")
+    # A driver may start the ride either immediately after matching or after
+    # marking that they are en route to the pickup point.
+    if trip.status not in (TripStatus.matched, TripStatus.en_route):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot start trip from status {trip.status.value}",
+        )
     trip.status = TripStatus.in_progress
     trip.started_at = datetime.utcnow()
     db.commit()
     return {"message": "Trip started"}
+
+
+@router.post("/{trip_id}/en-route")
+def mark_trip_en_route(
+    trip_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_driver),
+):
+    """Mark a matched trip as en route to the rider."""
+    trip = _get_trip_or_404(trip_id, db)
+    if trip.driver_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not the assigned driver for this trip")
+    if trip.status != TripStatus.matched:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot mark trip en route from status {trip.status.value}",
+        )
+    trip.status = TripStatus.en_route
+    db.commit()
+    return {"message": "Trip is en route"}
 
 
 @router.post("/{trip_id}/complete")
@@ -159,6 +207,22 @@ def cancel_trip(
     db.commit()
     return {"message": "Trip cancelled"}
 
+@router.get("/mine/current", response_model=TripOut)
+def get_current_trip_for_driver(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_driver),
+):
+    """Returns the driver's active trip (matched/in_progress), or 404."""
+    trip = (
+        db.query(Trip)
+        .filter(Trip.driver_id == current_user.id)
+        .filter(Trip.status.in_([TripStatus.matched, TripStatus.en_route, TripStatus.in_progress]))
+        .order_by(Trip.requested_at.desc())
+        .first()
+    )
+    if not trip:
+        raise HTTPException(status_code=404, detail="No active trip")
+    return trip
 
 @router.get("/{trip_id}", response_model=TripOut)
 def get_trip(

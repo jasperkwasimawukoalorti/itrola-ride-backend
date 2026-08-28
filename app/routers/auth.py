@@ -35,23 +35,39 @@ def verify_otp(payload: OTPVerify, db: Session = Depends(get_db)):
 
     if payload.role == "rider":
         user = db.query(User).filter(User.phone == payload.phone).first()
+
         if not user:
             user = User(phone=payload.phone)
             db.add(user)
             db.commit()
             db.refresh(user)
-        token = create_access_token(subject=user.id, role="rider")
 
+        user_id = str(user.id)
+        token = create_access_token(
+            subject=user.id,
+            role="rider"
+        )
     elif payload.role == "driver":
         driver = db.query(Driver).filter(Driver.phone == payload.phone).first()
+
         if not driver:
             raise HTTPException(
                 status_code=404,
                 detail="No driver account found. Complete onboarding first."
             )
-        token = create_access_token(subject=driver.id, role="driver")
 
+        user_id = str(driver.id)
+        token = create_access_token(
+            subject=driver.id,
+            role="driver"
+        )
     else:
-        raise HTTPException(status_code=400, detail="role must be 'rider' or 'driver'")
+        raise HTTPException(
+            status_code=400,
+            detail="role must be 'rider' or 'driver'"
+        )
 
-    return TokenResponse(access_token=token)
+    return TokenResponse(
+        access_token=token,
+        user_id=user_id
+    )

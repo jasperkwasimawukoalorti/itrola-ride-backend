@@ -41,6 +41,26 @@ MOMO_PROVIDER_MAP = {
 }
 
 
+def _normalize_momo_number(number: str) -> str:
+    """Normalize a Ghanaian mobile number for Paystack."""
+    number = number.strip().replace(" ", "").replace("-", "")
+    if number.startswith("0"):
+        number = "+233" + number[1:]
+    elif number.startswith("233"):
+        number = "+" + number
+
+    if (
+        not number.startswith("+233")
+        or len(number) != 13
+        or not number[4:].isdigit()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="momo_number must be a valid Ghanaian mobile number",
+        )
+    return number
+
+
 @router.post("/trips/{trip_id}/pay")
 async def initiate_momo_payment(
     trip_id: str,
@@ -64,6 +84,8 @@ async def initiate_momo_payment(
     if not provider:
         raise HTTPException(status_code=400, detail="network must be one of: mtn, vodafone, airteltigo")
 
+    momo_number = _normalize_momo_number(payload.momo_number)
+
     amount_pesewas = int(round((trip.fare_final or trip.fare_estimate) * 100))
 
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -73,10 +95,10 @@ async def initiate_momo_payment(
                 headers={"Authorization": f"Bearer {PAYSTACK_SECRET_KEY}"},
                 json={
                     "amount": amount_pesewas,
-                    "email": f"{payload.momo_number}@itrolaride.placeholder",  # Paystack requires an email field
+                    "email": f"{momo_number}@itrolaride.com",  # Paystack requires an email field
                     "currency": "GHS",
                     "mobile_money": {
-                        "phone": payload.momo_number,
+                        "phone": momo_number,
                         "provider": provider,
                     },
                 },

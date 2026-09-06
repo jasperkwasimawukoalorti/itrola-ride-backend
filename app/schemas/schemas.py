@@ -39,6 +39,8 @@ class DriverCreate(BaseModel):
     license_number: str
     license_expiry: datetime
     profile_photo_url: str
+    vehicle_plate_number: str
+    vehicle_photo_url: Optional[str] = None
 
     def __str__(self) -> str:
         """Return a readable representation without exposing sensitive IDs."""
@@ -54,9 +56,25 @@ class VehicleCreate(BaseModel):
     make_model: Optional[str] = None
     roadworthy_expiry: Optional[datetime] = None
     insurance_expiry: Optional[datetime] = None
+    photo_url: Optional[str] = None
 
     def __str__(self) -> str:
         return f"VehicleCreate(plate_number={self.plate_number!r}, make_model={self.make_model!r})"
+
+
+class VehicleOut(BaseModel):
+    id: str
+    plate_number: str
+    make_model: Optional[str] = None
+    roadworthy_expiry: Optional[datetime] = None
+    insurance_expiry: Optional[datetime] = None
+    photo_url: Optional[str] = None
+
+    def __str__(self) -> str:
+        return f"VehicleOut(id={self.id!r}, plate_number={self.plate_number!r})"
+
+    class Config:
+        from_attributes = True
 
 
 class DriverOut(BaseModel):

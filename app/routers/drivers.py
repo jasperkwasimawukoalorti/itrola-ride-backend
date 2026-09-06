@@ -7,7 +7,7 @@ docs. Automated document verification can come later.
 
 Auth model:
 - /onboard is public (that's how a driver gets into the system in the first place)
-- /vehicle, /location, /availability require the driver's own JWT (require_self_driver)
+- /vehicle (GET + POST), /location, /availability require the driver's own JWT (require_self_driver)
 - /verify requires the admin key (require_admin)
 """
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,7 +18,7 @@ from shapely.geometry import Point
 from app.core.database import get_db
 from app.core.deps import require_self_driver, require_admin, CurrentUser
 from app.models.models import Driver, Vehicle, DriverLocation, DriverStatus
-from app.schemas.schemas import DriverCreate, VehicleCreate, DriverOut, LocationUpdate
+from app.schemas.schemas import DriverCreate, VehicleCreate, VehicleOut, DriverOut, LocationUpdate
 
 router = APIRouter(prefix="/drivers", tags=["drivers"])
 
@@ -41,24 +41,68 @@ def onboard_driver(payload: DriverCreate, db: Session = Depends(get_db)):
     db.add(driver)
     db.commit()
     db.refresh(driver)
+
+    # Vehicle is created here rather than via the separate /vehicle endpoint
+    # below, since that endpoint requires the driver's own JWT via
+    # require_self_driver — and at this point in the flow the driver has no
+    # token yet (no OTP/login has happened). Bundling it into the public
+    # onboarding call avoids a chicken-and-egg auth problem.
+    vehicle = Vehicle(
+        driver_id=driver.id,
+        plate_number=payload.vehicle_plate_number,
+        photo_url=payload.vehicle_photo_url,
+    )
+    db.add(vehicle)
+    db.commit()
+
     return driver
 
 
-@router.post("/{driver_id}/vehicle")
+@router.post("/{driver_id}/vehicle", response_model=VehicleOut)
 def add_vehicle(
     driver_id: str,
     payload: VehicleCreate,
     db: Session = Depends(get_db),
     _: CurrentUser = Depends(require_self_driver),
 ):
+    """
+    Upserts, doesn't just insert. Used both for a driver's first vehicle
+    (right after onboarding, if it wasn't set during /onboard) and for
+    later updates (new car, replacement photo, etc.) — same endpoint,
+    same JWT-gated flow, no app rebuild needed for that second case since
+    this only requires a JS/backend change, not a new native module.
+    """
     driver = db.query(Driver).filter(Driver.id == driver_id).first()
     if not driver:
         raise HTTPException(status_code=404, detail="Driver not found")
 
-    vehicle = Vehicle(driver_id=driver_id, **payload.dict())
-    db.add(vehicle)
+    vehicle = db.query(Vehicle).filter(Vehicle.driver_id == driver_id).first()
+    if vehicle:
+        vehicle.plate_number = payload.plate_number
+        vehicle.make_model = payload.make_model
+        vehicle.roadworthy_expiry = payload.roadworthy_expiry
+        vehicle.insurance_expiry = payload.insurance_expiry
+        if payload.photo_url is not None:
+            vehicle.photo_url = payload.photo_url
+    else:
+        vehicle = Vehicle(driver_id=driver_id, **payload.dict())
+        db.add(vehicle)
+
     db.commit()
-    return {"message": "Vehicle added, pending verification"}
+    db.refresh(vehicle)
+    return vehicle
+
+
+@router.get("/{driver_id}/vehicle", response_model=VehicleOut)
+def get_vehicle(
+    driver_id: str,
+    db: Session = Depends(get_db),
+    _: CurrentUser = Depends(require_self_driver),
+):
+    vehicle = db.query(Vehicle).filter(Vehicle.driver_id == driver_id).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="No vehicle on file for this driver")
+    return vehicle
 
 
 @router.post("/{driver_id}/verify")

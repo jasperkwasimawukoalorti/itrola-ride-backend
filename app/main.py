@@ -1,6 +1,7 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from app.core.database import Base, engine
-from app.routers import auth, drivers, trips, payments
+from app.routers import auth, drivers, trips, payments, uploads
 
 app = FastAPI(title="itrola Ride API")
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,10 @@ app.include_router(auth.router)
 app.include_router(drivers.router)
 app.include_router(trips.router)
 app.include_router(payments.router)
+app.include_router(uploads.router)
+
+# Serves files saved by uploads.py (e.g. /static/driver_photos/<uuid>.jpg)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.get("/")

@@ -72,6 +72,7 @@ class Driver(Base):
     ghana_card_number = Column(String, nullable=True)
     license_number = Column(String, nullable=True)
     license_expiry = Column(DateTime, nullable=True)
+    profile_photo_url = Column(String, nullable=True)
     status = Column(Enum(DriverStatus), default=DriverStatus.pending, nullable=False)
     is_available = Column(Boolean, default=False)
     rating_avg = Column(Float, default=5.0)

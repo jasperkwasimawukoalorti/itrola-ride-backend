@@ -35,6 +35,7 @@ def onboard_driver(payload: DriverCreate, db: Session = Depends(get_db)):
         ghana_card_number=payload.ghana_card_number,
         license_number=payload.license_number,
         license_expiry=payload.license_expiry,
+        profile_photo_url=payload.profile_photo_url,
         status=DriverStatus.pending,  # admin must verify before driver can go online
     )
     db.add(driver)

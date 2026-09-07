@@ -1,23 +1,25 @@
 import os
-import dotenv as _dotenv
+from pathlib import Path
+from dotenv import load_dotenv
 
+# Explicit path, not just load_dotenv() — this file lives in app/, one
+# directory below the project root where .env actually is. Auto-detection
+# walks up from the caller's location and behaves inconsistently depending
+# on how the process was launched — this was the actual cause of the
+# JWT_SECRET warning: load_dotenv() was silently failing to find .env,
+# not a problem with .env itself.
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
-class dotenv:
-    """Compatibility facade for loading dotenv files."""
-
-    @staticmethod
-    def load_dotenv(*args, **kwargs):
-        """Load dotenv values into ``os.environ`` and report success."""
-        return _dotenv.load_dotenv(*args, **kwargs)
-
-dotenv.load_dotenv()  # without this, os.getenv() silently falls back to defaults —
-                # e.g. ADMIN_API_KEY would use the insecure "change-this-admin-key"
-                # fallback in deps.py rather than your real .env value, unless
-                # something exports it manually in the shell first.
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from app.routers import auth, drivers, trips, payments, uploads, admin_ui
+from app.routers.trips import retry_unmatched_trips
+from app.core.database import SessionLocal  # ASSUMPTION — confirm this exists;
+                                              # if get_db() in database.py uses a
+                                              # differently-named session factory,
+                                              # swap the name below to match.
 
 app = FastAPI(title="itrola Ride API")
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,6 +57,46 @@ app.include_router(admin_ui.router)
 
 # Serves files saved by uploads.py (e.g. /static/driver_photos/<uuid>.jpg)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+# --- Periodic re-matching sweep ---
+# Trip matching in trips.py only runs once, synchronously, at the moment a
+# rider calls /trips/request. If no verified+available+nearby driver exists
+# at that exact instant, the trip is stuck in 'requested' forever — nothing
+# else retries it. This loop is that retry: every REMATCH_INTERVAL_SECONDS,
+# sweep any trip that's been stuck long enough and try matching it again.
+REMATCH_INTERVAL_SECONDS = 15
+
+_rematch_task = None
+
+
+async def _rematch_loop():
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                matched = retry_unmatched_trips(db)
+                if matched:
+                    print(f"[rematch] matched {matched} previously-stuck trip(s)")
+            finally:
+                db.close()
+        except Exception as e:
+            # A bad sweep should never kill the loop — log and keep going,
+            # the next tick tries again.
+            print(f"[rematch] sweep failed: {e}")
+        await asyncio.sleep(REMATCH_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def start_rematch_loop():
+    global _rematch_task
+    _rematch_task = asyncio.create_task(_rematch_loop())
+
+
+@app.on_event("shutdown")
+async def stop_rematch_loop():
+    if _rematch_task:
+        _rematch_task.cancel()
 
 
 @app.get("/")

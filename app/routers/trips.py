@@ -12,7 +12,7 @@ Auth model:
 - /cancel allows either the trip's rider or its driver.
 - GET /{trip_id} allows either party on the trip.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 import sqlalchemy
@@ -90,8 +90,13 @@ def request_trip(
     return trip
 
 
-def _try_match_driver(trip: Trip, db: Session):
-    """Find nearest verified, available driver within 5km and assign them."""
+def _try_match_driver(trip: Trip, db: Session) -> bool:
+    """
+    Find nearest verified, available driver within 5km and assign them.
+    Returns True if a match was made, False otherwise — the caller (either
+    the initial /request call, or the periodic sweep below) uses this to
+    know whether to keep retrying.
+    """
     location = sqlalchemy.cast(DriverLocation.location, Geography)
     pickup = sqlalchemy.cast(trip.pickup_location, Geography)
     distance = sqlalchemy.func.ST_Distance(location, pickup)
@@ -107,16 +112,55 @@ def _try_match_driver(trip: Trip, db: Session):
         .limit(1)
     ).first()
 
-    if nearest:
-        driver_id = nearest[0]
-        trip.driver_id = driver_id
-        trip.status = TripStatus.matched
-        trip.matched_at = datetime.utcnow()
+    if not nearest:
+        return False
 
-        driver = db.query(Driver).filter(Driver.id == driver_id).first()
-        driver.is_available = False
+    driver_id = nearest[0]
+    trip.driver_id = driver_id
+    trip.status = TripStatus.matched
+    trip.matched_at = datetime.utcnow()
 
-        db.commit()
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    driver.is_available = False
+
+    db.commit()
+    return True
+
+
+# How long a trip sits unmatched before the periodic sweep will retry it.
+# Matched immediately means it's still worth trying once more shortly after
+# the first attempt, but not so soon that we're hammering the DB for no
+# reason — 15s balances "rider doesn't wait too long" against "don't spam
+# ST_DWithin queries every second for every unmatched trip".
+REMATCH_STALE_AFTER_SECONDS = 15
+
+
+def retry_unmatched_trips(db: Session) -> int:
+    """
+    Sweeps trips stuck in 'requested' status (no driver was available/nearby
+    at the moment they were created, and _try_match_driver only ever ran
+    once, at creation time) and retries matching for each. Called on a
+    timer from main.py's background task — see start_rematch_loop there.
+
+    Without this, a rider whose request happened to miss every online
+    driver by a few seconds would be stuck forever with no trip ever
+    getting assigned, since nothing else in this file re-attempts matching
+    after the initial /request call.
+    """
+    cutoff = datetime.utcnow() - timedelta(seconds=REMATCH_STALE_AFTER_SECONDS)
+    stale_trips = (
+        db.query(Trip)
+        .filter(Trip.status == TripStatus.requested)
+        .filter(Trip.requested_at <= cutoff)
+        .all()
+    )
+
+    matched_count = 0
+    for trip in stale_trips:
+        if _try_match_driver(trip, db):
+            matched_count += 1
+
+    return matched_count
 
 
 @router.post("/{trip_id}/start")

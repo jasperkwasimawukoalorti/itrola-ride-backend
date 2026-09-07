@@ -92,6 +92,29 @@ class DriverOut(BaseModel):
         from_attributes = True
 
 
+class DriverAdminOut(BaseModel):
+    """
+    Everything an admin needs to review an application: the fields DriverOut
+    intentionally leaves out (Ghana Card, license, expiry) plus the vehicle,
+    since a driver can't be approved without seeing both sets of documents.
+    """
+    id: str
+    phone: str
+    name: Optional[str]
+    status: str
+    ghana_card_number: Optional[str] = None
+    license_number: Optional[str] = None
+    license_expiry: Optional[datetime] = None
+    profile_photo_url: Optional[str] = None
+    vehicle: Optional[VehicleOut] = None
+
+    def __str__(self) -> str:
+        return f"DriverAdminOut(id={self.id!r}, name={self.name!r}, status={self.status!r})"
+
+    class Config:
+        from_attributes = True
+
+
 # --- Location ---
 class LocationUpdate(BaseModel):
     lat: float

@@ -11,10 +11,12 @@ single-instance dev/preview server; move to S3/Cloudinary/Supabase Storage
 before running multiple backend instances or redeploying without a
 persistent volume, since local disk storage won't survive either.
 """
+import io
 import os
 import uuid
 
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from PIL import Image, UnidentifiedImageError
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -24,9 +26,28 @@ PUBLIC_BASE_URL = "http://192.168.0.3:8001"
 
 STATIC_ROOT = "static"
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB — generous for a phone-camera JPEG,
+                                     # small enough to stop someone parking a
+                                     # huge file on your disk/bill.
 
 
 async def _save_upload(file: UploadFile, subdir: str) -> str:
+    contents = await file.read()
+
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Photo is too large (max 8MB)")
+
+    # Don't trust the claimed extension/content-type — actually decode the
+    # bytes as an image. This is the real fix, not just checking the
+    # filename: a renamed .exe with a .jpg extension would sail through the
+    # old check. Pillow raising UnidentifiedImageError means the bytes
+    # aren't a real image at all.
+    try:
+        img = Image.open(io.BytesIO(contents))
+        img.verify()
+    except UnidentifiedImageError:
+        raise HTTPException(status_code=400, detail="File is not a valid image")
+
     upload_dir = os.path.join(STATIC_ROOT, subdir)
     os.makedirs(upload_dir, exist_ok=True)
 
@@ -37,7 +58,6 @@ async def _save_upload(file: UploadFile, subdir: str) -> str:
     filename = f"{uuid.uuid4()}.{ext}"
     filepath = os.path.join(upload_dir, filename)
 
-    contents = await file.read()
     with open(filepath, "wb") as f:
         f.write(contents)
 

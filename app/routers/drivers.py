@@ -10,6 +10,8 @@ Auth model:
 - /vehicle (GET + POST), /location, /availability require the driver's own JWT (require_self_driver)
 - /verify requires the admin key (require_admin)
 """
+from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from geoalchemy2.shape import from_shape
@@ -18,7 +20,7 @@ from shapely.geometry import Point
 from app.core.database import get_db
 from app.core.deps import require_self_driver, require_admin, CurrentUser
 from app.models.models import Driver, Vehicle, DriverLocation, DriverStatus
-from app.schemas.schemas import DriverCreate, VehicleCreate, VehicleOut, DriverOut, LocationUpdate
+from app.schemas.schemas import DriverCreate, VehicleCreate, VehicleOut, DriverOut, DriverAdminOut, LocationUpdate
 
 router = APIRouter(prefix="/drivers", tags=["drivers"])
 
@@ -105,6 +107,19 @@ def get_vehicle(
     return vehicle
 
 
+@router.get("/pending", response_model=List[DriverAdminOut])
+def list_pending_drivers(
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+):
+    """
+    What the admin needs to see BEFORE calling /verify — without this,
+    there was no way to know which driver_id to approve short of querying
+    the database directly.
+    """
+    return db.query(Driver).filter(Driver.status == DriverStatus.pending).all()
+
+
 @router.post("/{driver_id}/verify")
 def verify_driver(
     driver_id: str,
@@ -117,6 +132,22 @@ def verify_driver(
     driver.status = DriverStatus.verified
     db.commit()
     return {"message": "Driver verified"}
+
+
+@router.post("/{driver_id}/reject")
+def reject_driver(
+    driver_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+):
+    """Counterpart to /verify — moves a pending application to suspended
+    rather than leaving the admin no way to decline a bad application."""
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    driver.status = DriverStatus.suspended
+    db.commit()
+    return {"message": "Driver rejected"}
 
 
 @router.post("/{driver_id}/location")

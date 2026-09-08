@@ -77,6 +77,21 @@ async def initiate_momo_payment(
         raise HTTPException(status_code=400, detail="Trip must be completed before payment")
     if trip.payment_status == PaymentStatus.paid:
         raise HTTPException(status_code=400, detail="Trip already paid")
+    if trip.payment_status == PaymentStatus.pending and trip.payment_reference:
+        # Without this, tapping "Pay Now" more than once — e.g. because the
+        # webhook confirmation is slow to arrive, or never arrives at all
+        # because your webhook URL isn't publicly reachable — fires a brand
+        # new Paystack charge every single tap, each one overwriting
+        # payment_reference. That's what produced 11 separate GHS 73.91
+        # transactions for what should have been one trip. This makes the
+        # endpoint idempotent while a charge is already in flight: same
+        # reference gets returned instead of a new charge being created.
+        return {
+            "message": "A payment is already in progress for this trip. "
+                       "Check your phone for the approval prompt.",
+            "reference": trip.payment_reference,
+            "paystack_status": "pending",
+        }
     if not PAYSTACK_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Payment provider not configured (PAYSTACK_SECRET_KEY missing)")
 

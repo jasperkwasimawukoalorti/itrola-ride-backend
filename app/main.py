@@ -1,7 +1,5 @@
 import os
-from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 from dotenv import load_dotenv
 
 # Explicit path, not just load_dotenv() — this file lives in app/, one
@@ -23,21 +21,7 @@ from app.core.database import SessionLocal  # ASSUMPTION — confirm this exists
                                               # differently-named session factory,
                                               # swap the name below to match.
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global _rematch_task
-    _rematch_task = asyncio.create_task(_rematch_loop())
-    try:
-        yield
-    finally:
-        if _rematch_task:
-            _rematch_task.cancel()
-            try:
-                await _rematch_task
-            except asyncio.CancelledError:
-                pass
-
-app = FastAPI(title="itrola Ride API", lifespan=lifespan)
+app = FastAPI(title="itrola Ride API")
 from fastapi.middleware.cors import CORSMiddleware
 
 # ALLOWED_ORIGINS: comma-separated list in .env, e.g.
@@ -101,6 +85,18 @@ async def _rematch_loop():
             # the next tick tries again.
             print(f"[rematch] sweep failed: {e}")
         await asyncio.sleep(REMATCH_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def start_rematch_loop():
+    global _rematch_task
+    _rematch_task = asyncio.create_task(_rematch_loop())
+
+
+@app.on_event("shutdown")
+async def stop_rematch_loop():
+    if _rematch_task:
+        _rematch_task.cancel()
 
 
 @app.get("/")

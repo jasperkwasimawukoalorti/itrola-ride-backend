@@ -7,8 +7,12 @@ import os
 import random
 import string
 import httpx
+from pathlib import Path
+from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from jose import jwt
+
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
 SECRET_KEY = os.getenv("JWT_SECRET", "change-this-in-production")
 ALGORITHM = "HS256"

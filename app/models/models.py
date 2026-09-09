@@ -134,6 +134,11 @@ class Trip(Base):
     payment_method = Column(Enum(PaymentMethod), default=PaymentMethod.cash)
     payment_status = Column(Enum(PaymentStatus), default=PaymentStatus.pending)
     payment_reference = Column(String, nullable=True, unique=True, index=True)
+    # Set the moment a MoMo charge is created, cleared never (just
+    # overwritten on each new attempt). Lets /pay tell "webhook is just
+    # slow" apart from "this attempt is dead, safe to let the rider retry" —
+    # see MOMO_AUTH_WINDOW_SECONDS in payments.py.
+    payment_initiated_at = Column(DateTime(timezone=True), nullable=True)
 
     rider = relationship("User", back_populates="trips")
     driver = relationship("Driver", back_populates="trips")

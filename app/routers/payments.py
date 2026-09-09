@@ -20,6 +20,7 @@ import os
 import hmac
 import hashlib
 import httpx
+from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
@@ -36,6 +37,12 @@ router = APIRouter(tags=["payments"])
 
 PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "")
 PAYSTACK_BASE_URL = "https://api.paystack.co"
+
+# Paystack's own MoMo docs: "the customer needs to complete the transaction
+# within 180 seconds, after which the transactions fail." We add a buffer
+# on top since our webhook could reasonably take a few extra seconds to
+# arrive and get processed after Paystack's own deadline passes.
+MOMO_AUTH_WINDOW_SECONDS = 200
 
 # Paystack's mobile_money channel expects a network provider code.
 MOMO_PROVIDER_MAP = {
@@ -87,15 +94,27 @@ async def initiate_momo_payment(
         # because your webhook URL isn't publicly reachable — fires a brand
         # new Paystack charge every single tap, each one overwriting
         # payment_reference. That's what produced 11 separate GHS 73.91
-        # transactions for what should have been one trip. This makes the
-        # endpoint idempotent while a charge is already in flight: same
-        # reference gets returned instead of a new charge being created.
-        return {
-            "message": "A payment is already in progress for this trip. "
-                       "Check your phone for the approval prompt.",
-            "reference": trip.payment_reference,
-            "paystack_status": "pending",
-        }
+        # transactions for what should have been one trip.
+        #
+        # But blocking forever is its own bug: if the webhook genuinely
+        # never arrives, the rider would be stuck unable to ever pay again.
+        # So this only blocks while the previous attempt could still be
+        # legitimately in flight — once MOMO_AUTH_WINDOW_SECONDS has passed,
+        # Paystack's own charge would have expired anyway, so we fall
+        # through and let a fresh one be created.
+        elapsed = (
+            datetime.utcnow() - trip.payment_initiated_at
+            if trip.payment_initiated_at
+            else timedelta(seconds=MOMO_AUTH_WINDOW_SECONDS + 1)  # missing timestamp = treat as expired, don't block
+        )
+        if elapsed < timedelta(seconds=MOMO_AUTH_WINDOW_SECONDS):
+            return {
+                "message": "A payment is already in progress for this trip. "
+                           "Check your phone for the approval prompt.",
+                "reference": trip.payment_reference,
+                "paystack_status": "pending",
+            }
+        # else: fall through — previous attempt is stale, safe to retry
     if not PAYSTACK_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Payment provider not configured (PAYSTACK_SECRET_KEY missing)")
 
@@ -141,6 +160,7 @@ async def initiate_momo_payment(
     trip.payment_method = PaymentMethod.momo
     trip.payment_reference = reference
     trip.payment_status = PaymentStatus.pending
+    trip.payment_initiated_at = datetime.utcnow()
     db.commit()
 
     return {

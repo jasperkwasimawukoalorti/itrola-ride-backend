@@ -5,9 +5,13 @@ For local dev without Postgres, you can swap DATABASE_URL to sqlite,
 but PostGIS features (nearest-driver queries) require real PostGIS in production.
 """
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",

@@ -1,5 +1,4 @@
 import os
-from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -22,58 +21,7 @@ from app.core.database import SessionLocal  # ASSUMPTION — confirm this exists
                                               # differently-named session factory,
                                               # swap the name below to match.
 
-class ServerLifespan(AbstractAsyncContextManager):
-    """Concrete async lifespan context manager for the API.
-
-    Implements the two abstract hooks required by
-    contextlib.AbstractAsyncContextManager: __aenter__ and __aexit__.
-    It starts the background rematch loop on startup and cancels it
-    cleanly on shutdown.
-    """
-
-    def __init__(self, app: FastAPI):
-        self.app = app
-        self._rematch_task = None
-
-    async def __aenter__(self):
-        """Start the rematch worker task when the FastAPI app enters its lifespan."""
-        global _rematch_task
-        # Keep the task on the instance so shutdown always cancels the
-        # worker that was created for the current app startup.
-        self._rematch_task = asyncio.create_task(_rematch_loop())
-        _rematch_task = self._rematch_task
-        return self.app
-
-    async def __aexit__(self, exc_type, exc, tb):
-        """Cancel the background rematch task and allow the app to shut down cleanly."""
-        task = self._rematch_task
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                # Await the cancellation with return_exceptions=True so the
-                # app lifespan can exit without surfacing a noisy shutdown
-                # cancellation as an application error.
-                await asyncio.gather(task, return_exceptions=True)
-            except asyncio.CancelledError:
-                # Swallow shutdown cancellation to keep FastAPI lifespan
-                # teardown clean while the event loop is winding down.
-                pass
-        # Returning False preserves any exception already raised in the
-        # lifespan context instead of masking it.
-        return False
-
-
-def lifespan(app: FastAPI) -> ServerLifespan:
-    """FastAPI lifespan factory returning an async context manager object.
-
-    This replaces the generator-based @asynccontextmanager form with a
-    class that explicitly implements the abstract methods required by the
-    async context-manager protocol.
-    """
-    return ServerLifespan(app)
-
-
-app = FastAPI(title="itrola Ride API", lifespan=lifespan)
+app = FastAPI(title="itrola Ride API")
 from fastapi.middleware.cors import CORSMiddleware
 
 # ALLOWED_ORIGINS: comma-separated list in .env, e.g.
@@ -137,6 +85,18 @@ async def _rematch_loop():
             # the next tick tries again.
             print(f"[rematch] sweep failed: {e}")
         await asyncio.sleep(REMATCH_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def start_rematch_loop():
+    global _rematch_task
+    _rematch_task = asyncio.create_task(_rematch_loop())
+
+
+@app.on_event("shutdown")
+async def stop_rematch_loop():
+    if _rematch_task:
+        _rematch_task.cancel()
 
 
 @app.get("/")

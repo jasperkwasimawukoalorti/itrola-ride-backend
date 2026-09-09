@@ -20,8 +20,12 @@ import os
 import hmac
 import hashlib
 import httpx
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from sqlalchemy.orm import Session
+
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
 from app.core.database import get_db
 from app.core.deps import require_rider, CurrentUser

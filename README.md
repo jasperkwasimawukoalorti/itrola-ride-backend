@@ -35,8 +35,9 @@ FastAPI backend implementing:
 
 4. **Run the API:**
    ```
-   uvicorn app.main:app --reload
+   uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
    ```
+   On a phone browser on the same WiFi, point the client to the laptop's LAN IP such as `http://192.168.0.3:8001` and keep `PUBLIC_BASE_URL` aligned with it.
 
 5. Visit `http://localhost:8000/docs` for interactive Swagger UI — test every endpoint from there before building the mobile apps.
 

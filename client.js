@@ -4,7 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Point this at your laptop's local network IP while developing on the
 // same WiFi (no ngrok needed), or your Cloud Run URL in prod.
 // Kept as a separate constant so it's a one-line change (or wire to app config / env).
-export const API_BASE_URL = 'http://192.168.0.2:8001';
+// Keep this consistent with PUBLIC_BASE_URL in uploads.py.
+export const API_BASE_URL = 'http://192.168.0.3:8001';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

@@ -20,9 +20,9 @@ from PIL import Image, UnidentifiedImageError
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
-# Matches API_BASE_URL in src/api/client.js. Update both together if the
+# Matches API_BASE_URL in client.js. Update both together if the
 # backend's network address changes (new WiFi, ngrok tunnel, Cloud Run URL).
-PUBLIC_BASE_URL = "http://192.168.0.3:8001"
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://192.168.0.3:8001")
 
 STATIC_ROOT = "static"
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
